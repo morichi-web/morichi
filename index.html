@@ -175,7 +175,7 @@ body:after{box-shadow:0 0 0 28px rgba(183,137,69,.025),0 0 0 56px rgba(247,223,2
 </div>
 
 <script>
-const SHEET_URL = 'https://script.google.com/macros/s/AKfycbwyb-w7KkQhJvc7ycSDLY04Eadkwv9np-JHUxJpccCiiwzCOawB_JVy907NJfxGgr0/exec';
+const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1NvBHcRC5lWvtlKTvVVkBpQNeVyH_9QM2/gviz/tq?sheet=Productos&headers=1&tqx=responseHandler:morichiReceive';
 let SHEET_PRODUCTS = [];
 
 // Estas imágenes mantienen Belladona y Aurelia visibles aunque todavía no hayas
@@ -261,43 +261,85 @@ function renderCatalog(products){
   document.getElementById('catalogSync').textContent='Inventario actualizado: '+new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'});
 }
 function loadFromSheet(){
-  // JSONP permite que GitHub Pages lea el Apps Script sin problemas de CORS.
-  const callback='morichiReceive';
-  let finished=false;
-  const script=document.createElement('script');
-  script.id='morichi-sheet-script';
 
-  function fallbackCatalog(message){
-    if(finished)return;
-    finished=true;
-    document.getElementById('catalogSync').textContent=message;
-    const fallbackRows=Object.entries(FALLBACK_PRODUCTS).map(([name,p],i)=>({
-      'ID':'B-'+String(i+1).padStart(3,'0'),'Nombre':name,'Categoría':'Bolsos','Color':p.color,
-      'Precio (COP)':p.price.replace(/[^0-9]/g,''),'Cantidad':p.availability==='Agotado'?0:1,
-      'Estado':p.availability,'Descripción':p.description,'Foto 1':p.images[0],'Foto 2':p.images[1]||''
-    }));
-    renderCatalog(fallbackRows);
-    script.remove();
-  }
+  const script = document.createElement('script');
 
-  window[callback]=function(data){
-    if(finished)return;
-    finished=true;
-    renderCatalog(Array.isArray(data)?data:[]);
+  script.id = 'morichi-sheet-script';
+
+  let finished = false;
+
+  window.morichiReceive = function(response){
+
+    if(finished) return;
+
+    finished = true;
+
+    if(!response || response.status !== 'ok' || !response.table){
+
+      console.error('No se pudo leer Google Sheets:', response);
+
+      document.getElementById('catalogSync').textContent =
+        'No se pudo actualizar el inventario.';
+
+      script.remove();
+
+      return;
+    }
+
+    const columns = response.table.cols || [];
+    const rows = response.table.rows || [];
+
+    const products = rows.map(function(row){
+
+      const product = {};
+
+      columns.forEach(function(column, index){
+
+        const cell = row.c && row.c[index];
+
+        if(cell && Object.prototype.hasOwnProperty.call(cell, 'v')){
+
+          product[column.label] = cell.v;
+
+        }else{
+
+          product[column.label] = '';
+
+        }
+
+      });
+
+      return product;
+
+    });
+
+    console.log('Productos recibidos desde Google Sheets:', products.length);
+
+    renderCatalog(products);
+
     script.remove();
+
   };
 
-  script.onerror=function(){
-    fallbackCatalog('No se pudo conectar al inventario. Mostrando los productos guardados.');
+  script.onerror = function(){
+
+    if(finished) return;
+
+    finished = true;
+
+    console.error('No se pudo conectar con Google Sheets.');
+
+    document.getElementById('catalogSync').textContent =
+      'No se pudo actualizar el inventario.';
+
+    script.remove();
+
   };
 
-  script.src=SHEET_URL+'?callback='+callback+'&_='+Date.now();
+  script.src = SHEET_URL;
+
   document.body.appendChild(script);
 
-  // Si el navegador no ejecuta la respuesta JSONP, no dejamos el catálogo bloqueado.
-  setTimeout(function(){
-    fallbackCatalog('Inventario temporalmente no disponible. Mostrando los productos guardados.');
-  },30000);
 }
 
 function openProduct(id){
