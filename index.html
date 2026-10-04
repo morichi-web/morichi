@@ -212,6 +212,11 @@ function fallbackFor(name){
   const key=Object.keys(FALLBACK_PRODUCTS).find(k=>norm(k)===norm(name));
   return key ? FALLBACK_PRODUCTS[key] : null;
 }
+function fallbackForId(id){
+  const map={'B-001':'Belladona','B-002':'Aurelia'};
+  const key=map[clean(id)];
+  return key ? FALLBACK_PRODUCTS[key] : null;
+}
 function normalizeProduct(row, index=0){
   // El nombre es opcional. Cada fila recibe un código interno único para WhatsApp.
   const name=clean(row['Nombre']);
@@ -219,10 +224,10 @@ function normalizeProduct(row, index=0){
   const color=clean(row['Color']);
   const quantity=row['Cantidad'];
   const state=statusFromQuantity(quantity,row['Estado']);
-  const fallback=fallbackFor(name);
+  const id=clean(row['ID']) || ('B-'+String(index+1).padStart(3,'0'));
+  const fallback=fallbackFor(name) || fallbackForId(id);
   const photos=[row['Foto 1'],row['Foto 2'],row['Foto 3']].map(clean).filter(Boolean);
   const images=photos.length ? photos : (fallback ? fallback.images : []);
-  const id=clean(row['ID']) || ('B-'+String(index+1).padStart(3,'0'));
   return {
     id, name, category, color,
     price:formatPrice(row['Precio (COP)']),
@@ -256,24 +261,45 @@ function renderCatalog(products){
   document.getElementById('catalogSync').textContent='Inventario actualizado: '+new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'});
 }
 function loadFromSheet(){
-  const callback='morichiReceive_'+Date.now();
-  window[callback]=function(data){
-    try{ renderCatalog(Array.isArray(data)?data:[]); }
-    finally{ delete window[callback]; const s=document.getElementById(callback); if(s) s.remove(); }
-  };
+  // JSONP permite que GitHub Pages lea el Apps Script sin problemas de CORS.
+  const callback='morichiReceive';
+  let finished=false;
   const script=document.createElement('script');
-  script.id=callback;
-  script.src=SHEET_URL+'?callback='+encodeURIComponent(callback)+'&_='+Date.now();
-  script.onerror=function(){
-    document.getElementById('catalogSync').textContent='No se pudo conectar al inventario. Se muestran los productos guardados en el catálogo.';
+  script.id='morichi-sheet-script';
+
+  function fallbackCatalog(message){
+    if(finished)return;
+    finished=true;
+    document.getElementById('catalogSync').textContent=message;
     const fallbackRows=Object.entries(FALLBACK_PRODUCTS).map(([name,p],i)=>({
-      'ID':'B-'+String(i+1).padStart(3,'0'),'Nombre':name,'Categoría':'Bolsos','Color':p.color,'Precio (COP)':p.price.replace(/[^0-9]/g,''),'Cantidad':p.availability==='Agotado'?0:1,'Estado':p.availability,'Descripción':p.description,'Foto 1':p.images[0],'Foto 2':p.images[1]||''
+      'ID':'B-'+String(i+1).padStart(3,'0'),'Nombre':name,'Categoría':'Bolsos','Color':p.color,
+      'Precio (COP)':p.price.replace(/[^0-9]/g,''),'Cantidad':p.availability==='Agotado'?0:1,
+      'Estado':p.availability,'Descripción':p.description,'Foto 1':p.images[0],'Foto 2':p.images[1]||''
     }));
     renderCatalog(fallbackRows);
-    delete window[callback]; script.remove();
+    script.remove();
+  }
+
+  window[callback]=function(data){
+    if(finished)return;
+    finished=true;
+    renderCatalog(Array.isArray(data)?data:[]);
+    script.remove();
   };
+
+  script.onerror=function(){
+    fallbackCatalog('No se pudo conectar al inventario. Mostrando los productos guardados.');
+  };
+
+  script.src=SHEET_URL+'?callback='+callback+'&_='+Date.now();
   document.body.appendChild(script);
+
+  // Si el navegador no ejecuta la respuesta JSONP, no dejamos el catálogo bloqueado.
+  setTimeout(function(){
+    fallbackCatalog('Inventario temporalmente no disponible. Mostrando los productos guardados.');
+  },8000);
 }
+
 function openProduct(id){
   const p=SHEET_PRODUCTS.find(x=>x.id===id);
   if(!p)return;
